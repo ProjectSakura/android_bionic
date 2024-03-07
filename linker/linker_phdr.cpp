@@ -879,8 +879,10 @@ int phdr_table_protect_segments(const ElfW(Phdr)* phdr_table, size_t phdr_count,
  *   0 on success, -1 on failure (error code in errno).
  */
 int phdr_table_unprotect_segments(const ElfW(Phdr)* phdr_table,
-                                  size_t phdr_count, ElfW(Addr) load_bias) {
-  return _phdr_table_set_load_prot(phdr_table, phdr_count, load_bias, PROT_WRITE);
+                                  size_t phdr_count, ElfW(Addr) load_bias,
+                                  bool should_pad_segments) {
+  return _phdr_table_set_load_prot(phdr_table, phdr_count, load_bias, PROT_WRITE,
+                                   should_pad_segments);
 }
 
 /* Used internally by phdr_table_protect_gnu_relro and
