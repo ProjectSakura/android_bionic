@@ -43,6 +43,7 @@
 #include "linker_utils.h"
 
 #include "private/CFIShadow.h" // For kLibraryAlignment
+#include "private/elf_note.h"
 
 static int GetTargetElfMachine() {
 #if defined(__arm__)
@@ -694,6 +695,55 @@ bool ElfReader::ReserveAddressSpace(address_space_params* address_space) {
   return true;
 }
 
+// Find the ELF note of type NT_ANDROID_TYPE_PAD_SEGMENT and check that the desc value is 1.
+bool ElfReader::ReadPadSegmentNote() {
+  // The ELF can have multiple PT_NOTE's, check them all
+  for (size_t i = 0; i < phdr_num_; ++i) {
+    const ElfW(Phdr)* phdr = &phdr_table_[i];
+
+    if (phdr->p_type != PT_NOTE) {
+      continue;
+    }
+
+    // Some obfuscated ELFs may contain "empty" PT_NOTE program headers that don't
+    // point to any part of the ELF (p_memsz == 0). Skip these since there is
+    // nothing to decode. See: b/324468126
+    if (phdr->p_memsz == 0) {
+      continue;
+    }
+
+    // note_fragment is scoped to within the loop so that there is
+    // at most 1 PT_NOTE mapped at anytime during this search.
+    MappedFileFragment note_fragment;
+    if (!note_fragment.Map(fd_, file_offset_, phdr->p_offset, phdr->p_memsz)) {
+      DL_ERR("\"%s\": PT_NOTE mmap(nullptr, %p, PROT_READ, MAP_PRIVATE, %d, %p) failed: %m",
+             name_.c_str(), reinterpret_cast<void*>(phdr->p_memsz), fd_,
+             reinterpret_cast<void*>(page_start(file_offset_ + phdr->p_offset)));
+      return false;
+    }
+
+    const ElfW(Nhdr)* note_hdr = nullptr;
+    const char* note_desc = nullptr;
+    if (!__get_elf_note(NT_ANDROID_TYPE_PAD_SEGMENT, "Android",
+                        reinterpret_cast<ElfW(Addr)>(note_fragment.data()),
+                        phdr, &note_hdr, &note_desc)) {
+      continue;
+    }
+
+    if (note_hdr->n_descsz != sizeof(ElfW(Word))) {
+      DL_ERR("\"%s\" NT_ANDROID_TYPE_PAD_SEGMENT note has unexpected n_descsz: %u",
+             name_.c_str(), reinterpret_cast<unsigned int>(note_hdr->n_descsz));
+      return false;
+    }
+
+    // 1 == enabled, 0 == disabled
+    should_pad_segments_ = *reinterpret_cast<const ElfW(Word)*>(note_desc) == 1;
+    return true;
+  }
+
+  return true;
+}
+
 bool ElfReader::LoadSegments() {
   for (size_t i = 0; i < phdr_num_; ++i) {
     const ElfW(Phdr)* phdr = &phdr_table_[i];
@@ -879,10 +929,8 @@ int phdr_table_protect_segments(const ElfW(Phdr)* phdr_table, size_t phdr_count,
  *   0 on success, -1 on failure (error code in errno).
  */
 int phdr_table_unprotect_segments(const ElfW(Phdr)* phdr_table,
-                                  size_t phdr_count, ElfW(Addr) load_bias,
-                                  bool should_pad_segments) {
-  return _phdr_table_set_load_prot(phdr_table, phdr_count, load_bias, PROT_WRITE,
-                                   should_pad_segments);
+                                  size_t phdr_count, ElfW(Addr) load_bias) {
+  return _phdr_table_set_load_prot(phdr_table, phdr_count, load_bias, PROT_WRITE);
 }
 
 /* Used internally by phdr_table_protect_gnu_relro and

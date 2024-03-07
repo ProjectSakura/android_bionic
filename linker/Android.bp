@@ -543,6 +543,12 @@ cc_test {
         "liblog_for_runtime_apex",
     ],
 
+    data_libs: [
+        "crt_pad_segment_disabled",
+        "crt_pad_segment_enabled",
+        "no_crt_pad_segment",
+    ],
+
     arch: {
         arm: {
             srcs: ["arch/arm_neon/linker_gnu_hash_neon.cpp"],
