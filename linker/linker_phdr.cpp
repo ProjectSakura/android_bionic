@@ -42,6 +42,7 @@
 #include "linker_debug.h"
 #include "linker_utils.h"
 
+#include "private/bionic_asm_note.h"
 #include "private/CFIShadow.h" // For kLibraryAlignment
 #include "private/elf_note.h"
 
@@ -141,8 +142,18 @@ static int GetTargetElfMachine() {
                                       MAYBE_MAP_FLAG((x), PF_R, PROT_READ) | \
                                       MAYBE_MAP_FLAG((x), PF_W, PROT_WRITE))
 
-// Default PMD size for x86_64 and aarch64 (2MB).
-static constexpr size_t kPmdSize = (1UL << 21);
+static const size_t kPageSize = page_size();
+
+/*
+ * Generic PMD size calculation:
+ *    - Each page table (PT) is of size 1 page.
+ *    - Each page table entry (PTE) is of size 64 bits.
+ *    - Each PTE locates one physical page frame (PFN) of size 1 page.
+ *    - A PMD entry locates 1 page table (PT)
+ *
+ *   PMD size = Num entries in a PT * page_size
+ */
+static const size_t kPmdSize = (kPageSize / sizeof(uint64_t)) * kPageSize;
 
 ElfReader::ElfReader()
     : did_read_(false), did_load_(false), fd_(-1), file_offset_(0), file_size_(0), phdr_num_(0),
@@ -164,7 +175,8 @@ bool ElfReader::Read(const char* name, int fd, off64_t file_offset, off64_t file
       VerifyElfHeader() &&
       ReadProgramHeaders() &&
       ReadSectionHeaders() &&
-      ReadDynamicSection()) {
+      ReadDynamicSection() &&
+      ReadPadSegmentNote()) {
     did_read_ = true;
   }
 
